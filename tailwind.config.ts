@@ -9,10 +9,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: "var(--background)",
-        foreground: "var(--foreground)",
+        gray: {
+          200: "#edf2f7"
+        }
       },
     },
   },
-  plugins: [],
+  plugins: [
+    require("tw-neumorphism"),
+  ],
+  variants: {
+    neumorphism: ['responsive'],
+  }
 } satisfies Config;

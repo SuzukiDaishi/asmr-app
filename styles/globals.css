@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gray-200;
+}
+
+label {
+  @apply select-none;
+}
+
+.nm-button {
+  @apply px-4 py-2 border border-gray-300 nm-flat-gray-200 rounded cursor-pointer;
+}
+
+.nm-button:hover {
+  @apply nm-flat-gray-300;
+}
+
+.nm-button:active {
+  @apply nm-inset-gray-200;
+}

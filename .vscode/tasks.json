@@ -1,0 +1,22 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Build Tauri Debug",
+        "type": "shell",
+        "command": "tauri build --dev",
+        "problemMatcher": []
+      },
+      {
+        "label": "Start Front-end Server",
+        "type": "shell",
+        "command": "pnpm dev",
+        "isBackground": true,
+        "problemMatcher": []
+      },
+      {
+        "label": "Prepare Debugging",
+        "dependsOn": ["Build Tauri Debug", "Start Front-end Server"]
+      }
+    ]
+  }
