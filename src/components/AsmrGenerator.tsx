@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/api/dialog";
 import Knob from "../components/knob";
 import ToggleSwitch from "./ToggleSwitch";
 import { InvokeArgs } from "@tauri-apps/api/tauri";
+import { ASMR3DModel } from "../components/ASMR3DModel";
 
 type InvokeFunction = <T>(cmd: string, args?: InvokeArgs | undefined) => Promise<T>;
 
@@ -23,42 +24,15 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
   const [sourceNoise, setSourceNoise] = useState<string>("white");
   const [noiseOptions, setNoiseOptions] = useState<string[]>([]);
 
-  // dB -> 線形倍率 変換 (dBが-60dB以下なら0にする)
-  const dBToLinear = (db: number): number => (db <= -60 ? 0 : Math.pow(10, db / 20));
+  // dB -> 線形倍率 変換
+  const dBToLinear = (db: number): number =>
+    db <= -60 ? 0 : Math.pow(10, db / 20);
 
   useEffect(() => {
     invoke("get_noise_types")
       .then((types) => setNoiseOptions(types as string[]))
       .catch(console.error);
   }, [invoke]);
-
-  // Azimuth/Elevation の Canvas 描画
-  useEffect(() => {
-    const canvas = document.getElementById("asmrCanvas") as HTMLCanvasElement | null;
-    if (canvas) {
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = "#f0f0f0";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Draw head
-        ctx.beginPath();
-        ctx.arc(canvas.width / 2, canvas.height / 2, 50, 0, 2 * Math.PI);
-        ctx.fillStyle = "#ccc";
-        ctx.fill();
-
-        // Draw sound source based on azimuth and elevation
-        const radius = Math.min(canvas.width, canvas.height) / 3;
-        const x = canvas.width / 2 + radius * Math.cos((azimuth * Math.PI) / 180);
-        const y = canvas.height / 2 - radius * Math.sin((elevation * Math.PI) / 180);
-        ctx.beginPath();
-        ctx.arc(x, y, 10, 0, 2 * Math.PI);
-        ctx.fillStyle = "#f00";
-        ctx.fill();
-      }
-    }
-  }, [azimuth, elevation]);
 
   const handlePreGainChange = (newDb: number): void => {
     setPreGainDb(newDb);
@@ -91,15 +65,13 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
       getCloser,
       sourceNoise,
     });
-    // 引数のキー名を変更して、Tauri 側の期待に合わせる
     invoke("asmr_play", {
       path: filePath,
       whisper,
-      sourceNoise, // ここを変更
-      getCloser,   // もしこちらも要求されているなら変更
+      sourceNoise,
+      getCloser,
     }).catch(console.error);
   };
-  
 
   const handleDryPlay = (): void => {
     invoke("dry_play", { path: filePath }).catch(console.error);
@@ -111,7 +83,7 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
 
   const handleFileSelect = async (): Promise<void> => {
     const selectedFile = await open({
-      filters: [{ name: "Audio Files", extensions: ["wav", "mp3", "flac"] }],
+      filters: [{ name: "Audio Files", extensions: ["wav"] }],
     });
     if (typeof selectedFile === "string") {
       setFilePath(selectedFile);
@@ -119,12 +91,13 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
   };
 
   return (
+    // 全体のテキスト選択を禁止（コピー不可）する
     <div className="flex flex-col items-center p-4 h-screen box-border select-none">
-      <h1 className="text-2xl font-bold mb-4 select-none">ASMR Generator</h1>
+      <h1 className="text-2xl font-bold mb-4">ASMR Generator</h1>
 
       {/* ファイル選択 */}
       <div className="mb-4 flex flex-col items-start space-y-2 w-full max-w-6xl">
-        <label className="text-sm font-semibold select-none">Audio File</label>
+        <label className="text-sm font-semibold">Audio File</label>
         <div className="flex items-center w-full">
           <button
             onClick={handleFileSelect}
@@ -133,6 +106,7 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
           >
             Select File
           </button>
+          {/* 入力フォームのみコピー可能に */}
           <input
             type="text"
             className="w-full p-4 text-gray-600 bg-gray-200 nm-inset-gray-200 rounded-lg focus:outline-none select-text"
@@ -169,7 +143,9 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
             />
             <label>Whisper</label>
             <ToggleSwitch checked={whisper} onChange={setWhisper} />
+
             <label>Source Noise</label>
+            {/* select は入力フォームとしてコピー可能に */}
             <select
               value={sourceNoise}
               onChange={(e) => setSourceNoise(e.target.value)}
@@ -193,18 +169,23 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
             <ToggleSwitch checked={getCloser} onChange={setGetCloser} />
           </div>
 
-          {/* 中央キャンバス */}
+          {/* 中央パネル(3D モデル表示) */}
           <div className="flex-1 mx-4">
-            <canvas
-              id="asmrCanvas"
-              className="w-full h-full border border-gray-300 rounded-lg"
-              tabIndex={-1}
-            ></canvas>
+            <div style={{ width: "100%", height: "100%", minHeight: 0 }}>
+              <ASMR3DModel
+                azimuth={azimuth}
+                elevation={elevation}
+                filePath={filePath}
+                getCloser={getCloser}
+                whisper={whisper}
+                sourceNoise={sourceNoise}
+              />
+            </div>
           </div>
 
           {/* 右パネル */}
           <div className="flex flex-col w-1/4 space-y-4">
-            <label>Azimuth</label>
+            <label>Azimuth (degrees)</label>
             <Knob
               size={80}
               mx={200}
@@ -214,7 +195,7 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
               value={azimuth}
               onChange={handleAzimuthChange}
             />
-            <label>Elevation</label>
+            <label>Elevation (degrees)</label>
             <Knob
               size={80}
               mx={200}
@@ -227,7 +208,7 @@ const ASMRGenerator: React.FC<ASMRGeneratorProps> = ({ invoke }) => {
           </div>
         </div>
 
-        {/* ボタン類 */}
+        {/* ボタン類（コピー不可） */}
         <div className="flex justify-center gap-4">
           <button onClick={handlePlay} tabIndex={-1} className="nm-button">
             Play

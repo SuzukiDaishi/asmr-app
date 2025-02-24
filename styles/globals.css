@@ -21,3 +21,43 @@ label {
 .nm-button:active {
   @apply nm-inset-gray-200;
 }
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gray-200;
+}
+
+label {
+  @apply select-none;
+}
+
+.nm-button {
+  @apply px-4 py-2 border border-gray-300 nm-flat-gray-200 rounded cursor-pointer;
+}
+
+.nm-button:hover {
+  @apply nm-flat-gray-300;
+}
+
+.nm-button:active {
+  @apply nm-inset-gray-200;
+}
+
+/* テキスト選択禁止（各種ベンダープレフィックス付き） */
+.select-none {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* 入力フォームなど、テキスト選択可能にするクラス */
+.select-text {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
