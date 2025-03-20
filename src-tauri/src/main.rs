@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use rodio::{Decoder, OutputStream, Sink, Source};
 use std::{
     fs::File,
@@ -38,6 +38,11 @@ static DYNAMIC_HRTF_ELEVATION: Lazy<Arc<Mutex<f32>>> =
 // -----------------------------
 static NOISE_TYPES: Lazy<Vec<&'static str>> =
     Lazy::new(|| vec!["White", "Pink", "Velvet"]);
+
+// -----------------------------
+// グローバルな HRTF モデルファイルパス
+// -----------------------------
+static HRTF_MODEL_PATH: OnceCell<String> = OnceCell::new();
 
 // -----------------------------
 // PhantomSilhouette.rs 内の NoiseType 列挙型をインポート
@@ -144,23 +149,51 @@ impl AudioManager {
             .map_err(|e| format!("Failed to open WAV '{}': {:?}", path, e))?;
         let spec = reader.spec();
         println!("[DEBUG] WAV format: {:?}", spec);
-        if spec.channels != 1 {
-            return Err(format!("Only mono WAV supported, found {} channels", spec.channels));
-        }
-        // WAVファイルからサンプルを読み込み (f64)
+        
+        // WAVがモノラルでない場合は各フレームの各チャンネルの平均を算出しモノラルに変換する
         let samples_f64: Vec<f64> = match (spec.bits_per_sample, spec.sample_format) {
-            (16, hound::SampleFormat::Int) => reader
-                .samples::<i16>()
-                .map(|s| s.unwrap() as f64 / i16::MAX as f64)
-                .collect(),
-            (24, hound::SampleFormat::Int) => reader
-                .samples::<i32>()
-                .map(|s| s.unwrap() as f64 / (1 << 23) as f64)
-                .collect(),
-            (32, hound::SampleFormat::Float) => reader
-                .samples::<f32>()
-                .map(|s| s.unwrap() as f64)
-                .collect(),
+            (16, hound::SampleFormat::Int) => {
+                let samples: Vec<i16> = reader.samples::<i16>().map(|s| s.unwrap()).collect();
+                if spec.channels == 1 {
+                    samples.into_iter().map(|s| s as f64 / i16::MAX as f64).collect()
+                } else {
+                    samples
+                        .chunks(spec.channels as usize)
+                        .map(|chunk| {
+                            let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
+                            sum as f64 / spec.channels as f64 / i16::MAX as f64
+                        })
+                        .collect()
+                }
+            }
+            (24, hound::SampleFormat::Int) => {
+                let samples: Vec<i32> = reader.samples::<i32>().map(|s| s.unwrap()).collect();
+                if spec.channels == 1 {
+                    samples.into_iter().map(|s| s as f64 / (1 << 23) as f64).collect()
+                } else {
+                    samples
+                        .chunks(spec.channels as usize)
+                        .map(|chunk| {
+                            let sum: i64 = chunk.iter().map(|&s| s as i64).sum();
+                            sum as f64 / spec.channels as f64 / (1 << 23) as f64
+                        })
+                        .collect()
+                }
+            }
+            (32, hound::SampleFormat::Float) => {
+                let samples: Vec<f32> = reader.samples::<f32>().map(|s| s.unwrap()).collect();
+                if spec.channels == 1 {
+                    samples.into_iter().map(|s| s as f64).collect()
+                } else {
+                    samples
+                        .chunks(spec.channels as usize)
+                        .map(|chunk| {
+                            let sum: f32 = chunk.iter().sum();
+                            sum as f64 / spec.channels as f64
+                        })
+                        .collect()
+                }
+            }
             _ => {
                 return Err(format!(
                     "Unsupported WAV format bits_per_sample={} sample_format={:?}",
@@ -191,14 +224,12 @@ impl AudioManager {
         // getCloser が true の場合は距離補正を適用、false の場合はバイパス
         let final_samples: Vec<f32> = if getCloser {
             let processed_stereo: Vec<[f32; 2]> = base_samples.iter().map(|&s| [s, s]).collect();
-            // getCloser が true の場合、距離補正用の倍率を 1.0 とする
             let mut distance_processor =
                 DistanceAdjustProcessor::new(spec.sample_rate as usize, Some(1.0))
                     .map_err(|e| format!("Distance processor error: {:?}", e))?;
             let distance_adjusted_stereo = distance_processor.process(&processed_stereo[..]);
             distance_adjusted_stereo.iter().map(|[l, _r]| *l).collect()
         } else {
-            // バイパス：距離補正なし
             base_samples
         };
 
@@ -323,7 +354,11 @@ impl DynamicHrtfSourceOnnx {
         _initial_azimuth: f32,
         _initial_elevation: f32,
     ) -> Self {
-        let hrtf_processor = hrtf::HrtfProcessor::new("hrtf_model.onnx")
+        // グローバルな HRTF_MODEL_PATH からリソースパスを取得
+        let resource_path = HRTF_MODEL_PATH
+            .get()
+            .expect("HRTF model path not set");
+        let hrtf_processor = hrtf::HrtfProcessor::new(resource_path)
             .expect("Failed to create HRTF processor");
         Self {
             data,
@@ -543,6 +578,18 @@ fn stop_audio() -> Result<String, String> {
 // -------------------------------
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            // Tauri のリソースパスを解決してグローバルにセットする
+            let resource_path = app
+                .path_resolver()
+                .resolve_resource("resources/hrtf_model.onnx")
+                .expect("Failed to resolve resource path");
+            HRTF_MODEL_PATH
+                .set(resource_path.to_string_lossy().into_owned())
+                .expect("HRTF_MODEL_PATH already set");
+            println!("Resolved HRTF model path: {}", resource_path.display());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             set_pre_gain,
             set_post_gain,

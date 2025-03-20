@@ -5,6 +5,7 @@ import React, {
   useRef,
   useEffect,
   forwardRef,
+  useCallback,
   JSX
 } from 'react';
 import { Canvas, useFrame, extend } from '@react-three/fiber';
@@ -79,7 +80,12 @@ export type DistortedSphereProps = JSX.IntrinsicElements['mesh'] & {
   stopRotation?: boolean;
 };
 
-export const DistortedSphere = forwardRef<THREE.Mesh, DistortedSphereProps>(({
+export interface DistortedSphereHandle {
+  mesh: THREE.Mesh | null;
+  geometry: THREE.BufferGeometry | undefined;
+}
+
+export const DistortedSphere = forwardRef<DistortedSphereHandle, DistortedSphereProps>(({
   radius = 1,
   color = '#ffffff',
   fresnelPower = 3.0,
@@ -89,7 +95,12 @@ export const DistortedSphere = forwardRef<THREE.Mesh, DistortedSphereProps>(({
   ...props
 }, ref) => {
   const meshRef = useRef<THREE.Mesh>(null);
-  React.useImperativeHandle(ref, () => meshRef.current as THREE.Mesh);
+  
+  // Imperative handle に mesh と追加情報 (geometry) を渡す
+  React.useImperativeHandle(ref, () => ({
+    mesh: meshRef.current,
+    geometry: meshRef.current ? (meshRef.current.geometry as THREE.BufferGeometry) : undefined,
+  }));
   
   const geometry = useMemo(() => {
     const geom = new THREE.IcosahedronGeometry(radius, 3);
@@ -128,7 +139,7 @@ export const DistortedSphere = forwardRef<THREE.Mesh, DistortedSphereProps>(({
   
   return (
     <mesh ref={meshRef} geometry={geometry} {...props} castShadow receiveShadow>
-      <gemMaterialImpl />
+      <primitive object={new GemMaterialImpl()} attach="material" />
     </mesh>
   );
 });
@@ -147,20 +158,28 @@ export const SatelliteSphere: React.FC<SatelliteSphereProps> = ({
   targetPosition,
   ...sphereProps
 }) => {
-  const meshRef = useRef<THREE.Mesh>(null);
+  // Ref は DistortedSphereHandle 型で管理する
+  const sphereHandleRef = useRef<DistortedSphereHandle>(null);
+
   useEffect(() => {
-    if (meshRef.current) {
-      meshRef.current.position.copy(initialPosition);
+    if (sphereHandleRef.current && sphereHandleRef.current.mesh) {
+      sphereHandleRef.current.mesh.position.copy(initialPosition);
     }
   }, [initialPosition]);
-  
+
   useFrame((state, delta) => {
-    if (!meshRef.current) return;
-    meshRef.current.position.lerp(targetPosition, delta * 0.5);
+    if (!sphereHandleRef.current || !sphereHandleRef.current.mesh) return;
+    sphereHandleRef.current.mesh.position.lerp(targetPosition, delta * 0.5);
   });
-  
+
+  // handleRef は DistortedSphereHandle を受け取る
+  const handleRef: React.RefCallback<DistortedSphereHandle> = useCallback((instance) => {
+    sphereHandleRef.current = instance;
+  }, []);
+
   return (
-    <DistortedSphere ref={meshRef} {...sphereProps} />
+    // @ts-ignore
+    <DistortedSphere ref={handleRef} {...sphereProps} />
   );
 };
 
@@ -214,9 +233,9 @@ const WaterFlowShader = {
   uniforms: {
     tDiffuse: { value: null },
     uTime: { value: 0 },
-    uFrequency: { value: 20.0 },   // 周波数を強調
-    uAmplitude: { value: 0.05 },    // 振幅を強調
-    uSpeed: { value: 3.0 },         // 動きを速く
+    uFrequency: { value: 20.0 },
+    uAmplitude: { value: 0.05 },
+    uSpeed: { value: 3.0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -235,12 +254,10 @@ const WaterFlowShader = {
     varying vec2 vUv;
     void main(){
       vec2 uv = vUv;
-      // 水面の激しい揺らぎ：uAmplitude と uFrequency を大きく設定
       uv += uAmplitude * vec2(
         sin(uv.y * uFrequency + uTime * uSpeed),
         cos(uv.x * uFrequency + uTime * uSpeed)
       );
-      // 各色チャンネルに異なるオフセットを適用して虹色の収差を演出
       vec2 redOffset = vec2(0.005, 0.0);
       vec2 greenOffset = vec2(0.0, 0.005);
       vec2 blueOffset = vec2(-0.005, 0.0);
@@ -257,7 +274,6 @@ const WaterFlowPass = forwardRef((props, ref) => {
   useFrame((state) => {
     pass.uniforms.uTime.value = state.clock.getElapsedTime();
   });
-  // 明示的に最後のパスとして設定する場合は renderToScreen を true に設定
   pass.renderToScreen = true;
   return <primitive ref={ref} object={pass} dispose={null} />;
 });
@@ -267,12 +283,12 @@ const WaterFlowPass = forwardRef((props, ref) => {
 //────────────────────────────
 
 export type ASMR3DModelProps = {
-  azimuth: number;      // azimuth angle (degrees)
-  elevation: number;    // elevation angle (degrees)
-  filePath: string;     // file path (empty if not selected)
-  getCloser: boolean;   // if true, move satellite sphere closer; otherwise, add Y offset
-  whisper: boolean;     // if true, enable rotation
-  sourceNoise: string;  // "white" / "pink" / "velvet" → satellite color
+  azimuth: number;
+  elevation: number;
+  filePath: string;
+  getCloser: boolean;
+  whisper: boolean;
+  sourceNoise: string;
 };
 
 export const ASMR3DModel: React.FC<ASMR3DModelProps> = ({
@@ -368,7 +384,6 @@ export const ASMR3DModel: React.FC<ASMR3DModelProps> = ({
           initialPosition={initialSatellitePos}
           targetPosition={targetSatellitePos}
         />
-        {/* Post-processing Effects */}
         <EffectComposer>
           <Bloom luminanceThreshold={0.2} luminanceSmoothing={0.5} intensity={1.5} />
           <ChromaticAberration blendFunction={BlendFunction.ADD} offset={[0.0001, 0.0001]} />
